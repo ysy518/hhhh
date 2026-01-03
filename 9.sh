@@ -33,10 +33,6 @@ RAW_MIRRORS=(
     "https://raw.githubusercontent.com"  # 原始地址作为备用
 )
 
-# 当前使用的镜像索引
-CURRENT_GITHUB_MIRROR=0
-CURRENT_RAW_MIRROR=0
-
 # 最大重试次数
 MAX_RETRIES=3
 
@@ -50,6 +46,99 @@ echo -e "${PINK}\e[1m
  WELCOME!${PINK} Now we will install and setup Hyprland on an Arch-based system
                        Created by \e[1;4mPhunt_Vieg_
 ${WHITE}"
+
+# 基础包安装函数（放在脚本开头，确保可以被调用）
+install_basic_packages() {
+    echo -e "${BLUE}[INFO]${WHITE} Installing basic Hyprland packages..."
+    
+    local packages=(
+        "hyprland"
+        "waybar"
+        "rofi"
+        "alacritty"
+        "sddm"
+        "networkmanager"
+        "bluetooth"
+        "bluez"
+        "bluez-utils"
+        "pulseaudio"
+        "pulseaudio-bluetooth"
+        "brightnessctl"
+        "playerctl"
+        "dunst"
+        "polkit-kde-agent"
+        "xdg-desktop-portal-hyprland"
+        "xdg-desktop-portal-gtk"
+        "qt5-wayland"
+        "qt6-wayland"
+        "noto-fonts"
+        "noto-fonts-cjk"
+        "ttf-dejavu"
+        "ttf-liberation"
+    )
+    
+    for pkg in "${packages[@]}"; do
+        echo -e "${BLUE}[INFO]${WHITE} Installing $pkg..."
+        if sudo pacman -S --needed --noconfirm "$pkg" 2>/dev/null; then
+            echo -e "${GREEN}✓${WHITE} Installed $pkg"
+        else
+            echo -e "${YELLOW}⚠${WHITE} Failed to install $pkg"
+        fi
+    done
+}
+
+# 安装 yay AUR 助手函数
+install_yay() {
+    echo -e "${BLUE}[INFO]${WHITE} Installing yay AUR helper..."
+    
+    # 清理可能存在的旧目录
+    rm -rf ~/yay /tmp/yay 2>/dev/null || true
+    
+    # 设置 Go 模块代理
+    export GOPROXY="https://goproxy.cn,direct"
+    export GOSUMDB="off"
+    export GO111MODULE="on"
+    
+    # 使用国内镜像下载 yay
+    echo -e "${BLUE}[INFO]${WHITE} Downloading yay from AUR mirror..."
+    
+    # 尝试使用清华镜像
+    if git clone https://mirrors.tuna.tsinghua.edu.cn/aur/yay.git ~/yay 2>/dev/null; then
+        echo -e "${GREEN}✓ Cloned yay from TUNA mirror${WHITE}"
+    else
+        # 如果清华镜像失败，尝试直接 AUR
+        echo -e "${YELLOW}[WARNING]${WHITE} TUNA mirror failed, trying direct AUR..."
+        if git clone https://aur.archlinux.org/yay.git ~/yay 2>/dev/null; then
+            echo -e "${GREEN}✓ Cloned yay from AUR${WHITE}"
+        else
+            echo -e "${RED}[ERROR]${WHITE} Failed to clone yay"
+            return 1
+        fi
+    fi
+    
+    # 编译安装 yay
+    cd ~/yay
+    echo -e "${BLUE}[INFO]${WHITE} Building yay..."
+    if makepkg -si --noconfirm; then
+        echo -e "${GREEN}✓ yay installed successfully${WHITE}"
+        cd ~
+        rm -rf ~/yay
+        return 0
+    else
+        echo -e "${YELLOW}[WARNING]${WHITE} Failed to build yay, trying alternative method..."
+        cd ~
+        
+        # 尝试使用预编译包
+        echo -e "${BLUE}[INFO]${WHITE} Trying pre-built yay..."
+        if sudo pacman -S yay-bin --noconfirm 2>/dev/null; then
+            echo -e "${GREEN}✓ Installed yay-bin${WHITE}"
+            return 0
+        fi
+        
+        echo -e "${RED}[ERROR]${WHITE} Could not install yay"
+        return 1
+    fi
+}
 
 # 网络测试函数
 test_network() {
@@ -66,63 +155,6 @@ test_network() {
         fi
     done
     return 0
-}
-
-# 测试代理函数
-test_proxy() {
-    echo -e "${BLUE}[INFO]${WHITE} Testing GitHub proxy..."
-    
-    # 测试 gh-proxy.net
-    if curl -s --connect-timeout 10 "https://gh-proxy.net/" > /dev/null; then
-        echo -e "${GREEN}✓ gh-proxy.net is working${WHITE}"
-        return 0
-    else
-        echo -e "${YELLOW}⚠ gh-proxy.net is not accessible${WHITE}"
-        return 1
-    fi
-}
-
-# 下载函数，带重试机制
-download_with_retry() {
-    local url="$1"
-    local output="$2"
-    local retries=0
-    
-    # 如果是 GitHub 链接，优先使用 gh-proxy.net
-    if [[ "$url" == https://github.com/* ]] || [[ "$url" == https://raw.githubusercontent.com/* ]]; then
-        # 提取原始路径
-        local original_path="${url#https://github.com/}"
-        original_path="${original_path#https://raw.githubusercontent.com/}"
-        
-        # 优先使用 gh-proxy.net
-        local proxy_url="https://gh-proxy.net/${url#https://}"
-        echo -e "${BLUE}[INFO]${WHITE} Using gh-proxy.net for download..."
-        
-        if curl $CURL_OPTIONS -fSL "$proxy_url" -o "$output"; then
-            echo -e "${GREEN}✓ Download successful using gh-proxy.net${WHITE}"
-            return 0
-        fi
-    fi
-    
-    # 如果 gh-proxy.net 失败，尝试其他方法
-    while [[ $retries -lt $MAX_RETRIES ]]; do
-        echo -e "${BLUE}[INFO]${WHITE} Downloading from ${url:0:60}... (Attempt $((retries+1))/$MAX_RETRIES)"
-        
-        if curl $CURL_OPTIONS -fSL "$url" -o "$output"; then
-            echo -e "${GREEN}✓ Download successful${WHITE}"
-            return 0
-        fi
-        
-        retries=$((retries + 1))
-        
-        if [[ $retries -lt $MAX_RETRIES ]]; then
-            echo -e "${YELLOW}[WARNING]${WHITE} Download failed, retrying in 5 seconds..."
-            sleep 5
-        fi
-    done
-    
-    echo -e "${RED}[ERROR]${WHITE} Failed to download after $MAX_RETRIES attempts"
-    return 1
 }
 
 # 尝试不同的镜像源
@@ -193,9 +225,6 @@ echo -e "${PINK}
 echo -e "${YELLOW}Checking network connectivity...${WHITE}"
 test_network
 
-# 测试代理
-test_proxy || echo -e "${YELLOW}⚠️  gh-proxy.net may not be available, will try other mirrors${WHITE}"
-
 # Asking if the user want to proceed
 echo -e "${YELLOW} Do you still want to continue with Hyprland installation using this script? [y/N]: \n"
 read -r confirm
@@ -222,7 +251,6 @@ echo "Server = https://mirrors.tuna.tsinghua.edu.cn/archlinux/\$repo/os/\$arch" 
 echo "Server = https://mirrors.ustc.edu.cn/archlinux/\$repo/os/\$arch" | sudo tee -a /etc/pacman.d/mirrorlist
 echo "Server = https://mirrors.aliyun.com/archlinux/\$repo/os/\$arch" | sudo tee -a /etc/pacman.d/mirrorlist
 echo "Server = https://mirrors.bfsu.edu.cn/archlinux/\$repo/os/\$arch" | sudo tee -a /etc/pacman.d/mirrorlist
-echo "Server = https://mirrors.hit.edu.cn/archlinux/\$repo/os/\$arch" | sudo tee -a /etc/pacman.d/mirrorlist
 
 sudo pacman -Syy --noconfirm || {
     echo -e "${YELLOW}[WARNING]${WHITE} Failed to update package database, continuing anyway..."
@@ -264,9 +292,7 @@ if try_different_mirrors "$SCRIPT_URL" "$TEMP_SCRIPT"; then
     fi
 else
     echo -e "${RED}[ERROR]${WHITE} Could not download setup script."
-    echo -e "${BLUE}[INFO]${WHITE} Please check your network connection and try again."
-    echo -e "${BLUE}[INFO]${WHITE} You can try manually: curl -L https://gh-proxy.net/https://raw.githubusercontent.com/ViegPhunt/auto-setup-LT/main/arch.sh -o /tmp/arch.sh"
-    exit 1
+    echo -e "${BLUE}[INFO]${WHITE} Skipping this step and continuing with installation..."
 fi
 
 # Making all the scripts executable
@@ -340,15 +366,18 @@ sudo pacman -S --needed --noconfirm git curl wget base-devel 2>/dev/null || {
     sudo pacman -S --needed --noconfirm wget 2>/dev/null || true
 }
 
-# 设置 Go 模块代理（如果安装 yay 需要）
-export GOPROXY="https://goproxy.cn,direct"
-export GOSUMDB="off"
-export GO111MODULE="on"
+# 安装 yay AUR 助手
+install_yay || echo -e "${YELLOW}[WARNING]${WHITE} Failed to install yay, continuing without AUR helper..."
 
 # 检查是否有安装脚本，没有则直接安装基础包
 if [ -f ~/dotfiles/.config/viegphunt/install_archpkg.sh ]; then
     echo -e "${BLUE}[INFO]${WHITE} Running package installation script..."
     chmod +x ~/dotfiles/.config/viegphunt/install_archpkg.sh 2>/dev/null || true
+    
+    # 设置代理环境变量，确保脚本中的下载使用代理
+    export http_proxy="http://127.0.0.1:7890" 2>/dev/null || true
+    export https_proxy="http://127.0.0.1:7890" 2>/dev/null || true
+    
     if ~/dotfiles/.config/viegphunt/install_archpkg.sh; then
         echo -e "${GREEN}✓ Package installation script completed${WHITE}"
     else
@@ -359,46 +388,6 @@ else
     echo -e "${YELLOW}[WARNING]${WHITE} Package installation script not found, installing basic packages..."
     install_basic_packages
 fi
-
-# 基础包安装函数
-install_basic_packages() {
-    echo -e "${BLUE}[INFO]${WHITE} Installing basic Hyprland packages..."
-    
-    local packages=(
-        "hyprland"
-        "waybar"
-        "rofi"
-        "alacritty"
-        "sddm"
-        "networkmanager"
-        "bluetooth"
-        "bluez"
-        "bluez-utils"
-        "pulseaudio"
-        "pulseaudio-bluetooth"
-        "brightnessctl"
-        "playerctl"
-        "dunst"
-        "polkit-kde-agent"
-        "xdg-desktop-portal-hyprland"
-        "xdg-desktop-portal-gtk"
-        "qt5-wayland"
-        "qt6-wayland"
-        "noto-fonts"
-        "noto-fonts-cjk"
-        "ttf-dejavu"
-        "ttf-liberation"
-    )
-    
-    for pkg in "${packages[@]}"; do
-        echo -e "${BLUE}[INFO]${WHITE} Installing $pkg..."
-        if sudo pacman -S --needed --noconfirm "$pkg" 2>/dev/null; then
-            echo -e "${GREEN}✓${WHITE} Installed $pkg"
-        else
-            echo -e "${YELLOW}⚠${WHITE} Failed to install $pkg"
-        fi
-    done
-}
 
 # enable bluetooth & networkmanager
 echo -e "${PINK}\n---------------------------------------------------------------------\n${YELLOW}[6/11]${PINK} ==> Enable bluetooth & networkmanager\n---------------------------------------------------------------------\n${WHITE}"
@@ -528,6 +517,7 @@ clear
 # 清理临时文件
 echo -e "${PINK}Cleaning up temporary files...${WHITE}"
 rm -f /tmp/arch_setup.sh /tmp/arch.sh 2>/dev/null || true
+rm -rf ~/yay /tmp/yay 2>/dev/null || true
 
 # Calculate how long the script took
 end=$(date +%s)
